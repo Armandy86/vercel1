@@ -1,178 +1,125 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { TopBar } from '@/components/TopBar';
+import Link from 'next/link';
+import { PageHero } from '@/components/PageHero';
 import { StatsCard } from '@/components/StatsCard';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { createClient } from '@/lib/supabase/client';
-import { formatCurrency, formatDate, getStatusColor } from '@/lib/utils';
-import {
-  Users,
-  FileText,
-  Banknote,
-  CheckCircle,
-  TrendingUp,
-} from 'lucide-react';
+import { formatCurrency, formatDate } from '@/lib/utils';
 import type { Payment, ClientPlan } from '@/types';
 
-interface Stats {
-  total_clients: number;
-  active_plans: number;
-  total_collections: number;
-  service_ready: number;
-}
+interface Stats { total_clients: number; assigned_plans: number; total_collections: number; service_ready: number; }
+
+const quickLinks = [
+  { href: '/clients', label: 'Clients', desc: 'Manage client records' },
+  { href: '/plans', label: 'Plans', desc: 'Plans and assignments' },
+  { href: '/payments', label: 'Payments', desc: 'Record and track' },
+  { href: '/services', label: 'Services', desc: 'Service readiness' },
+  { href: '/reports', label: 'Reports', desc: 'View reports' },
+];
 
 export default function DashboardPage() {
   const supabase = createClient();
-  const [stats, setStats] = useState<Stats>({
-    total_clients: 0,
-    active_plans: 0,
-    total_collections: 0,
-    service_ready: 0,
-  });
+  const [stats, setStats] = useState<Stats>({ total_clients: 0, assigned_plans: 0, total_collections: 0, service_ready: 0 });
   const [recentPayments, setRecentPayments] = useState<Payment[]>([]);
   const [pendingPlans, setPendingPlans] = useState<ClientPlan[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   const fetchData = async () => {
     try {
-      const [clientsRes, plansRes, paymentsRes, serviceRes, recentPayRes, pendingRes] =
-        await Promise.all([
-          supabase.from('clients').select('id', { count: 'exact' }),
-          supabase.from('client_plans').select('id', { count: 'exact' }).eq('status', 'active'),
-          supabase.from('payments').select('amount'),
-          supabase
-            .from('client_plans')
-            .select('id', { count: 'exact' })
-            .eq('service_ready', true),
-          supabase
-            .from('payments')
-            .select('*, client_plan:client_plans(*, client:clients(full_name), plan:plans(name))')
-            .order('payment_date', { ascending: false })
-            .limit(5),
-          supabase
-            .from('client_plans')
-            .select('*, client:clients(full_name), plan:plans(name)')
-            .eq('status', 'active')
-            .eq('service_ready', false)
-            .limit(5),
-        ]);
-
-      const totalCollections = (paymentsRes.data ?? []).reduce(
-        (sum, p) => sum + (p.amount ?? 0),
-        0
-      );
-
-      setStats({
-        total_clients: clientsRes.count ?? 0,
-        active_plans: plansRes.count ?? 0,
-        total_collections: totalCollections,
-        service_ready: serviceRes.count ?? 0,
-      });
+      const [clientsRes, plansRes, paymentsRes, serviceRes, recentPayRes, pendingRes] = await Promise.all([
+        supabase.from('clients').select('id', { count: 'exact' }),
+        // Count all assigned plans except cancelled (completed still counts; fully paid plans become "completed")
+        supabase.from('client_plans').select('id', { count: 'exact' }).neq('status', 'cancelled'),
+        supabase.from('payments').select('amount'),
+        supabase.from('client_plans').select('id', { count: 'exact' }).eq('service_ready', true),
+        supabase.from('payments').select('*, client_plan:client_plans(*, client:clients(full_name), plan:plans(name))').order('payment_date', { ascending: false }).limit(5),
+        supabase.from('client_plans').select('*, client:clients(full_name), plan:plans(name)').eq('status', 'active').eq('service_ready', false).limit(5),
+      ]);
+      const totalCollections = (paymentsRes.data ?? []).reduce((sum, p) => sum + (p.amount ?? 0), 0);
+      setStats({ total_clients: clientsRes.count ?? 0, assigned_plans: plansRes.count ?? 0, total_collections: totalCollections, service_ready: serviceRes.count ?? 0 });
       setRecentPayments((recentPayRes.data as Payment[]) ?? []);
       setPendingPlans((pendingRes.data as ClientPlan[]) ?? []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { console.error(err); } finally { setLoading(false); }
   };
 
-  const paymentMethodLabel: Record<string, string> = {
-    cash: 'Cash',
-    gcash: 'GCash',
-    bank_transfer: 'Bank Transfer',
-    check: 'Check',
-  };
+  const methodLabel: Record<string, string> = { cash: 'Cash', gcash: 'GCash', bank_transfer: 'Bank Transfer', check: 'Check' };
 
   return (
     <div>
-      <TopBar
+      <PageHero
         title="Dashboard"
-        subtitle={`Welcome back, ${new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`}
+        subtitle={`Welcome back - ${new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`}
       />
 
-      <div className="p-8 space-y-8">
+      {/* Quick links */}
+      <div style={{ background: '#fff', borderBottom: '1px solid #e5e7eb' }}>
+        <div style={{ maxWidth: 960, margin: '0 auto', padding: '0 24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)' }}>
+            {quickLinks.map(({ href, label, desc }, i) => (
+              <Link
+                key={href}
+                href={href}
+                style={{
+                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  padding: '18px 8px', textAlign: 'center', textDecoration: 'none',
+                  borderLeft: i > 0 ? '1px solid #e5e7eb' : 'none',
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{label}</span>
+                <span style={{ fontSize: 10, color: '#9ca3af', marginTop: 2 }}>{desc}</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 960, margin: '0 auto', padding: '32px 24px' }}>
         {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
-          <StatsCard
-            title="Total Clients"
-            value={loading ? '-' : stats.total_clients.toLocaleString()}
-            subtitle="Registered clients"
-            icon={<Users size={22} />}
-            color="blue"
-          />
-          <StatsCard
-            title="Active Plans"
-            value={loading ? '-' : stats.active_plans.toLocaleString()}
-            subtitle="Currently enrolled"
-            icon={<FileText size={22} />}
-            color="purple"
-          />
-          <StatsCard
-            title="Total Collections"
-            value={loading ? '-' : formatCurrency(stats.total_collections)}
-            subtitle="All-time payments received"
-            icon={<Banknote size={22} />}
-            color="green"
-          />
-          <StatsCard
-            title="Service Ready"
-            value={loading ? '-' : stats.service_ready.toLocaleString()}
-            subtitle="Plans ready for service"
-            icon={<CheckCircle size={22} />}
-            color="orange"
-          />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 32 }}>
+          <StatsCard title="Total Clients" value={loading ? '-' : stats.total_clients.toLocaleString()} subtitle="Registered" />
+          <StatsCard title="Assigned plans" value={loading ? '-' : stats.assigned_plans.toLocaleString()} subtitle="Active, completed, or on hold" />
+          <StatsCard title="Total Collections" value={loading ? '-' : formatCurrency(stats.total_collections)} subtitle="All-time" />
+          <StatsCard title="Service Ready" value={loading ? '-' : stats.service_ready.toLocaleString()} subtitle="Ready" />
         </div>
 
-        {/* Content Grid */}
-        <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
-          {/* Recent Payments */}
-          <Card className="xl:col-span-3">
+        {/* Two columns */}
+        <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 20 }}>
+          <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-semibold text-gray-900">Recent Payments</h2>
-                  <p className="text-sm text-gray-400 mt-0.5">Latest 5 payment transactions</p>
-                </div>
-                <TrendingUp size={18} className="text-gray-300" />
-              </div>
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>Recent Payments</span>
             </CardHeader>
-            <CardBody className="p-0">
+            <CardBody style={{ padding: 0 }}>
               {loading ? (
-                <div className="p-8 text-center text-gray-400 text-sm">Loading...</div>
+                <p style={{ padding: 40, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Loading...</p>
               ) : recentPayments.length === 0 ? (
-                <div className="p-8 text-center text-gray-400 text-sm">No payments recorded yet.</div>
+                <p style={{ padding: 40, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>No payments recorded yet.</p>
               ) : (
-                <div className="divide-y divide-gray-50">
-                  {recentPayments.map((payment) => (
-                    <div key={payment.id} className="flex items-center justify-between px-6 py-4 hover:bg-gray-50/50 transition-colors">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-green-100 rounded-xl flex items-center justify-center flex-shrink-0">
-                          <Banknote size={16} className="text-green-600" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium text-gray-900">
-                            {(payment as any).client_plan?.client?.full_name ?? 'Unknown Client'}
-                          </p>
-                          <p className="text-xs text-gray-400 mt-0.5">
-                            {(payment as any).client_plan?.plan?.name ?? '-'} -{' '}
-                            {formatDate(payment.payment_date)}
-                          </p>
-                        </div>
+                <div>
+                  {recentPayments.map((payment, i) => (
+                    <div
+                      key={payment.id}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        padding: '12px 20px',
+                        borderTop: i > 0 ? '1px solid #f3f4f6' : 'none',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 500, color: '#111827', margin: 0 }}>
+                          {(payment as any).client_plan?.client?.full_name ?? 'Unknown'}
+                        </p>
+                        <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>
+                          {(payment as any).client_plan?.plan?.name ?? '-'} - {formatDate(payment.payment_date)}
+                        </p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold text-gray-900">
-                          {formatCurrency(payment.amount)}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {paymentMethodLabel[payment.payment_method] ?? payment.payment_method}
-                        </p>
+                      <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 16 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#111827', margin: 0 }}>{formatCurrency(payment.amount)}</p>
+                        <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>{methodLabel[payment.payment_method] ?? payment.payment_method}</p>
                       </div>
                     </div>
                   ))}
@@ -181,48 +128,31 @@ export default function DashboardPage() {
             </CardBody>
           </Card>
 
-          {/* Pending Service Readiness */}
-          <Card className="xl:col-span-2">
+          <Card>
             <CardHeader>
-              <div>
-                <h2 className="text-base font-semibold text-gray-900">Needs Attention</h2>
-                <p className="text-sm text-gray-400 mt-0.5">Plans not yet service-ready</p>
-              </div>
+              <span style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>Needs Attention</span>
+              <p style={{ fontSize: 11, color: '#9ca3af', margin: 0, marginTop: 2 }}>Plans not yet service-ready</p>
             </CardHeader>
-            <CardBody className="p-0">
+            <CardBody style={{ padding: 0 }}>
               {loading ? (
-                <div className="p-8 text-center text-gray-400 text-sm">Loading...</div>
+                <p style={{ padding: 40, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Loading...</p>
               ) : pendingPlans.length === 0 ? (
-                <div className="p-8 text-center text-gray-400 text-sm">All plans are ready!</div>
+                <p style={{ padding: 40, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>All plans are ready.</p>
               ) : (
-                <div className="divide-y divide-gray-50">
-                  {pendingPlans.map((cp) => {
-                    const progress = cp.total_amount > 0
-                      ? Math.min((cp.paid_amount / cp.total_amount) * 100, 100)
-                      : 0;
+                <div>
+                  {pendingPlans.map((cp, i) => {
+                    const progress = cp.total_amount > 0 ? Math.min((cp.paid_amount / cp.total_amount) * 100, 100) : 0;
                     return (
-                      <div key={cp.id} className="px-6 py-4 hover:bg-gray-50/50 transition-colors">
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="text-sm font-medium text-gray-900 truncate pr-2">
-                            {(cp as any).client?.full_name ?? 'Unknown'}
-                          </p>
-                          <Badge
-                            variant={progress >= 100 ? 'success' : 'warning'}
-                            className="flex-shrink-0"
-                          >
-                            {progress.toFixed(0)}%
-                          </Badge>
+                      <div key={cp.id} style={{ padding: '12px 20px', borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                          <p style={{ fontSize: 13, fontWeight: 500, color: '#111827', margin: 0 }}>{(cp as any).client?.full_name ?? 'Unknown'}</p>
+                          <Badge variant={progress >= 100 ? 'success' : 'warning'}>{progress.toFixed(0)}%</Badge>
                         </div>
-                        <p className="text-xs text-gray-400 mb-2">
-                          {(cp as any).plan?.name ?? '-'}
-                        </p>
-                        <div className="w-full bg-gray-100 rounded-full h-1.5">
-                          <div
-                            className="bg-[#007AFF] h-1.5 rounded-full transition-all duration-500"
-                            style={{ width: `${progress}%` }}
-                          />
+                        <p style={{ fontSize: 11, color: '#9ca3af', margin: '0 0 6px' }}>{(cp as any).plan?.name ?? '-'}</p>
+                        <div style={{ width: '100%', background: '#e5e7eb', borderRadius: 9999, height: 6 }}>
+                          <div style={{ width: `${progress}%`, height: 6, borderRadius: 9999, background: '#5C1A1A', transition: 'width 0.5s' }} />
                         </div>
-                        <p className="text-xs text-gray-400 mt-1.5">
+                        <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>
                           {formatCurrency(cp.paid_amount)} / {formatCurrency(cp.total_amount)}
                         </p>
                       </div>

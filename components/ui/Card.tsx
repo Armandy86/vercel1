@@ -1,52 +1,37 @@
-import { cn } from '@/lib/utils';
-
 interface CardProps {
   children: React.ReactNode;
   className?: string;
   onClick?: () => void;
   hover?: boolean;
+  style?: React.CSSProperties;
 }
 
-export function Card({ children, className, onClick, hover }: CardProps) {
+export function Card({ children, className, onClick, hover, style }: CardProps) {
   return (
     <div
       onClick={onClick}
-      className={cn(
-        'bg-white rounded-2xl border border-gray-100 shadow-sm',
-        hover && 'cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all duration-200',
-        className
-      )}
+      className={`fp-card ${className ?? ''}`}
+      style={{ cursor: hover ? 'pointer' : undefined, transition: hover ? 'box-shadow 0.2s, transform 0.2s' : undefined, ...style }}
     >
       {children}
     </div>
   );
 }
 
-interface CardHeaderProps {
-  children: React.ReactNode;
-  className?: string;
-}
-
-export function CardHeader({ children, className }: CardHeaderProps) {
+export function CardHeader({ children, style }: { children: React.ReactNode; style?: React.CSSProperties; className?: string }) {
   return (
-    <div className={cn('px-6 py-5 border-b border-gray-50', className)}>
-      {children}
-    </div>
+    <div style={{ padding: '14px 20px', borderBottom: '1px solid #e5e7eb', ...style }}>{children}</div>
   );
 }
 
-export function CardBody({ children, className }: CardHeaderProps) {
+export function CardBody({ children, className, style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return (
-    <div className={cn('px-6 py-5', className)}>
-      {children}
-    </div>
+    <div className={className} style={{ padding: '14px 20px', ...style }}>{children}</div>
   );
 }
 
-export function CardFooter({ children, className }: CardHeaderProps) {
+export function CardFooter({ children, style }: { children: React.ReactNode; className?: string; style?: React.CSSProperties }) {
   return (
-    <div className={cn('px-6 py-4 border-t border-gray-50', className)}>
-      {children}
-    </div>
+    <div style={{ padding: '12px 20px', borderTop: '1px solid #f3f4f6', ...style }}>{children}</div>
   );
 }

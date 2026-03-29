@@ -1,19 +1,33 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { TopBar } from '@/components/TopBar';
+import { PageHero } from '@/components/PageHero';
 import { Card, CardBody, CardHeader } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Table, TableHead, TableBody, Th, Tr, Td } from '@/components/ui/Table';
 import { createClient } from '@/lib/supabase/client';
 import { formatCurrency, formatDate, getInitials } from '@/lib/utils';
 import { BarChart3, Users, FileText, CreditCard, TrendingUp, CheckCircle2, Download } from 'lucide-react';
 import type { ClientPlan, Payment } from '@/types';
 
-interface MonthlyData {
-  month: string;
-  amount: number;
-  count: number;
+interface MonthlyData { month: string; amount: number; count: number; }
+
+function downloadCSV(filename: string, headers: string[], rows: string[][]) {
+  const escape = (val: string) => {
+    if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+      return `"${val.replace(/"/g, '""')}"`;
+    }
+    return val;
+  };
+  const csv = [headers.join(','), ...rows.map((r) => r.map(escape).join(','))].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function ReportsPage() {
@@ -22,55 +36,31 @@ export default function ReportsPage() {
   const [clientPlans, setClientPlans] = useState<ClientPlan[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
-  const [totalStats, setTotalStats] = useState({
-    clients: 0, plans: 0, collected: 0, outstanding: 0,
-  });
+  const [totalStats, setTotalStats] = useState({ clients: 0, plans: 0, collected: 0, outstanding: 0 });
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     const [cliRes, plansRes, paymentsRes] = await Promise.all([
       supabase.from('clients').select('id', { count: 'exact' }),
-      supabase
-        .from('client_plans')
-        .select('*, client:clients(full_name), plan:plans(name, plan_type)')
-        .order('created_at', { ascending: false }),
-      supabase
-        .from('payments')
-        .select('*, client_plan:client_plans(client:clients(full_name), plan:plans(name))')
-        .order('payment_date', { ascending: false }),
+      supabase.from('client_plans').select('*, client:clients(full_name), plan:plans(name, plan_type)').order('created_at', { ascending: false }),
+      supabase.from('payments').select('*, client_plan:client_plans(client:clients(full_name), plan:plans(name))').order('payment_date', { ascending: false }),
     ]);
-
     const plans = (plansRes.data ?? []) as ClientPlan[];
     const pays = (paymentsRes.data ?? []) as Payment[];
-
     const totalCollected = pays.reduce((s, p) => s + p.amount, 0);
     const totalOutstanding = plans.reduce((s, p) => s + (p.balance ?? 0), 0);
+    setClientPlans(plans); setPayments(pays);
+    setTotalStats({ clients: cliRes.count ?? 0, plans: plans.length, collected: totalCollected, outstanding: totalOutstanding });
 
-    setClientPlans(plans);
-    setPayments(pays);
-    setTotalStats({
-      clients: cliRes.count ?? 0,
-      plans: plans.length,
-      collected: totalCollected,
-      outstanding: totalOutstanding,
-    });
-
-    // Build monthly collections
     const monthly: Record<string, MonthlyData> = {};
     pays.forEach((p) => {
       const d = new Date(p.payment_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleDateString('en-PH', { month: 'short', year: 'numeric' });
       if (!monthly[key]) monthly[key] = { month: label, amount: 0, count: 0 };
-      monthly[key].amount += p.amount;
-      monthly[key].count += 1;
+      monthly[key].amount += p.amount; monthly[key].count += 1;
     });
-    const sortedMonthly = Object.entries(monthly)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(-6)
-      .map(([, v]) => v);
-    setMonthlyData(sortedMonthly);
-
+    setMonthlyData(Object.entries(monthly).sort(([a], [b]) => a.localeCompare(b)).slice(-6).map(([, v]) => v));
     setLoading(false);
   }, [supabase]);
 
@@ -79,73 +69,119 @@ export default function ReportsPage() {
   const maxBar = Math.max(...monthlyData.map((m) => m.amount), 1);
 
   const statusBreakdown = [
-    { label: 'Active', count: clientPlans.filter((p) => p.status === 'active').length, color: 'bg-blue-500' },
-    { label: 'Completed', count: clientPlans.filter((p) => p.status === 'completed').length, color: 'bg-green-500' },
-    { label: 'Cancelled', count: clientPlans.filter((p) => p.status === 'cancelled').length, color: 'bg-red-400' },
-    { label: 'On Hold', count: clientPlans.filter((p) => p.status === 'on_hold').length, color: 'bg-yellow-400' },
+    { label: 'Active', count: clientPlans.filter((p) => p.status === 'active').length, color: '#3b82f6' },
+    { label: 'Completed', count: clientPlans.filter((p) => p.status === 'completed').length, color: '#22c55e' },
+    { label: 'Cancelled', count: clientPlans.filter((p) => p.status === 'cancelled').length, color: '#f87171' },
+    { label: 'On Hold', count: clientPlans.filter((p) => p.status === 'on_hold').length, color: '#facc15' },
   ];
 
   const planTypeBreakdown: Record<string, number> = {};
-  clientPlans.forEach((cp) => {
-    const t = (cp as any).plan?.plan_type ?? 'unknown';
-    planTypeBreakdown[t] = (planTypeBreakdown[t] ?? 0) + 1;
-  });
+  clientPlans.forEach((cp) => { const t = (cp as any).plan?.plan_type ?? 'unknown'; planTypeBreakdown[t] = (planTypeBreakdown[t] ?? 0) + 1; });
+
+  const exportClientPlans = () => {
+    const headers = ['Client', 'Plan', 'Plan Type', 'Total Amount', 'Paid Amount', 'Balance', 'Status', 'Service Ready', 'Start Date'];
+    const rows = clientPlans.map((cp) => [
+      (cp as any).client?.full_name ?? '-',
+      (cp as any).plan?.name ?? '-',
+      (cp as any).plan?.plan_type ?? '-',
+      cp.total_amount.toString(),
+      cp.paid_amount.toString(),
+      (cp.balance ?? 0).toString(),
+      cp.status,
+      cp.service_ready ? 'Yes' : 'No',
+      cp.start_date ?? '-',
+    ]);
+    downloadCSV(`client-plans-${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
+  };
+
+  const exportPayments = () => {
+    const headers = ['Client', 'Plan', 'Amount', 'Payment Method', 'Payment Date', 'Reference Number', 'Notes'];
+    const rows = payments.map((p) => [
+      (p as any).client_plan?.client?.full_name ?? '-',
+      (p as any).client_plan?.plan?.name ?? '-',
+      p.amount.toString(),
+      p.payment_method.replace('_', ' '),
+      p.payment_date ?? '-',
+      p.reference_number ?? '-',
+      p.notes ?? '-',
+    ]);
+    downloadCSV(`payments-${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
+  };
+
+  const exportSummary = () => {
+    const headers = ['Metric', 'Value'];
+    const rows = [
+      ['Total Clients', totalStats.clients.toString()],
+      ['Total Plans', totalStats.plans.toString()],
+      ['Total Collected', totalStats.collected.toString()],
+      ['Outstanding Balance', totalStats.outstanding.toString()],
+      ['', ''],
+      ['Plan Status', 'Count'],
+      ...statusBreakdown.map((s) => [s.label, s.count.toString()]),
+      ['', ''],
+      ['Plan Type', 'Count'],
+      ...Object.entries(planTypeBreakdown).map(([type, count]) => [type, count.toString()]),
+      ['', ''],
+      ['Monthly Collections', ''],
+      ['Month', 'Amount'],
+      ...monthlyData.map((m) => [m.month, m.amount.toString()]),
+    ];
+    downloadCSV(`summary-report-${new Date().toISOString().split('T')[0]}.csv`, headers, rows);
+  };
 
   return (
     <div>
-      <TopBar
-        title="Reports"
-        subtitle="Overview of all client and payment records"
-      />
+      <PageHero title="Reports" subtitle="Overview of all client and payment records" />
 
-      <div className="p-8 space-y-8">
-        {/* Summary KPIs */}
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-5">
+      <div style={{ maxWidth: 960, margin: '0 auto', padding: '32px 24px' }}>
+
+        {/* Export buttons */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 24, flexWrap: 'wrap' }}>
+          <Button size="sm" onClick={exportSummary} disabled={loading}>
+            <Download size={14} /> Export Summary
+          </Button>
+          <Button size="sm" variant="secondary" onClick={exportClientPlans} disabled={loading}>
+            <Download size={14} /> Export Client Plans
+          </Button>
+          <Button size="sm" variant="secondary" onClick={exportPayments} disabled={loading}>
+            <Download size={14} /> Export Payments
+          </Button>
+        </div>
+
+        {/* KPIs */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
           {[
-            { label: 'Total Clients', value: totalStats.clients, icon: <Users size={20} />, color: 'bg-blue-50 text-blue-600' },
-            { label: 'Total Plans', value: totalStats.plans, icon: <FileText size={20} />, color: 'bg-purple-50 text-purple-600' },
-            { label: 'Total Collected', value: formatCurrency(totalStats.collected), icon: <TrendingUp size={20} />, color: 'bg-green-50 text-green-600' },
-            { label: 'Outstanding Balance', value: formatCurrency(totalStats.outstanding), icon: <CreditCard size={20} />, color: 'bg-orange-50 text-orange-600' },
+            { label: 'Total Clients', value: totalStats.clients },
+            { label: 'Total Plans', value: totalStats.plans },
+            { label: 'Total Collected', value: formatCurrency(totalStats.collected) },
+            { label: 'Outstanding', value: formatCurrency(totalStats.outstanding) },
           ].map((item) => (
-            <div key={item.label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-              <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl ${item.color}`}>{item.icon}</div>
-                <div>
-                  <p className="text-xs text-gray-500 font-medium">{item.label}</p>
-                  <p className="text-lg font-bold text-gray-900 mt-0.5">{loading ? '-' : item.value}</p>
-                </div>
-              </div>
+            <div key={item.label} className="fp-stat">
+              <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>{item.label}</p>
+              <p style={{ fontSize: 17, fontWeight: 700, color: '#111827', marginTop: 4 }}>{loading ? '-' : item.value}</p>
             </div>
           ))}
         </div>
 
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-          {/* Monthly Collections Bar Chart */}
-          <Card className="xl:col-span-2">
+        {/* Charts */}
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16, marginBottom: 24 }}>
+          <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-base font-semibold text-gray-900">Monthly Collections</h2>
-                  <p className="text-sm text-gray-400 mt-0.5">Last 6 months</p>
-                </div>
-                <BarChart3 size={18} className="text-gray-300" />
-              </div>
+              <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>Monthly Collections</h2>
+              <p style={{ fontSize: 11, color: '#9ca3af', margin: '2px 0 0' }}>Last 6 months</p>
             </CardHeader>
             <CardBody>
               {loading ? (
-                <div className="h-48 flex items-center justify-center text-gray-400 text-sm">Loading chart...</div>
+                <div style={{ height: 176, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: 13 }}>Loading...</div>
               ) : monthlyData.length === 0 ? (
-                <div className="h-48 flex items-center justify-center text-gray-400 text-sm">No payment data yet.</div>
+                <div style={{ height: 176, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: 13 }}>No payment data yet.</div>
               ) : (
-                <div className="flex items-end gap-3 h-48">
+                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, height: 176 }}>
                   {monthlyData.map((m, i) => (
-                    <div key={i} className="flex-1 flex flex-col items-center gap-2">
-                      <span className="text-xs text-gray-500 font-medium">{formatCurrency(m.amount)}</span>
-                      <div
-                        className="w-full bg-gradient-to-t from-[#007AFF] to-blue-400 rounded-t-xl transition-all duration-700"
-                        style={{ height: `${Math.max((m.amount / maxBar) * 140, 8)}px` }}
-                      />
-                      <span className="text-xs text-gray-400 text-center leading-tight">{m.month}</span>
+                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500 }}>{formatCurrency(m.amount)}</span>
+                      <div style={{ width: '100%', borderRadius: '4px 4px 0 0', transition: 'height 0.7s', background: 'linear-gradient(to top, #5C1A1A, #7A2E2E)', height: Math.max((m.amount / maxBar) * 120, 6) }} />
+                      <span style={{ fontSize: 11, color: '#9ca3af', textAlign: 'center', lineHeight: '1.2' }}>{m.month}</span>
                     </div>
                   ))}
                 </div>
@@ -153,104 +189,74 @@ export default function ReportsPage() {
             </CardBody>
           </Card>
 
-          {/* Plan Status Breakdown */}
           <Card>
-            <CardHeader>
-              <h2 className="text-base font-semibold text-gray-900">Plan Status</h2>
-              <p className="text-sm text-gray-400 mt-0.5">Distribution overview</p>
-            </CardHeader>
+            <CardHeader><h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>Plan Status</h2></CardHeader>
             <CardBody>
-              <div className="space-y-3">
+              <div>
                 {statusBreakdown.map((item) => (
-                  <div key={item.label}>
-                    <div className="flex items-center justify-between text-sm mb-1.5">
-                      <span className="text-gray-600 font-medium">{item.label}</span>
-                      <span className="text-gray-900 font-semibold">{loading ? '-' : item.count}</span>
+                  <div key={item.label} style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                      <span style={{ color: '#4b5563' }}>{item.label}</span>
+                      <span style={{ fontWeight: 600, fontSize: 12, color: '#111827' }}>{loading ? '-' : item.count}</span>
                     </div>
-                    <div className="w-full bg-gray-100 rounded-full h-2">
-                      <div
-                        className={`${item.color} h-2 rounded-full transition-all duration-700`}
-                        style={{ width: totalStats.plans > 0 ? `${(item.count / totalStats.plans) * 100}%` : '0%' }}
-                      />
+                    <div style={{ width: '100%', background: '#e5e7eb', borderRadius: 9999, height: 5 }}>
+                      <div style={{ width: totalStats.plans > 0 ? `${(item.count / totalStats.plans) * 100}%` : '0%', height: 5, borderRadius: 9999, background: item.color, transition: 'width 0.7s' }} />
                     </div>
                   </div>
                 ))}
               </div>
-
-              <div className="mt-6 pt-4 border-t border-gray-50">
-                <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-3">By Plan Type</p>
-                <div className="space-y-1.5">
-                  {Object.entries(planTypeBreakdown).map(([type, count]) => (
-                    <div key={type} className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600 capitalize">{type}</span>
-                      <Badge>{count}</Badge>
-                    </div>
-                  ))}
-                </div>
+              <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #f3f4f6' }}>
+                <p style={{ fontSize: 11, fontWeight: 600, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>By Plan Type</p>
+                {Object.entries(planTypeBreakdown).map(([type, count]) => (
+                  <div key={type} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 13, marginBottom: 4 }}>
+                    <span style={{ color: '#4b5563', textTransform: 'capitalize' }}>{type}</span>
+                    <Badge>{count}</Badge>
+                  </div>
+                ))}
               </div>
             </CardBody>
           </Card>
         </div>
 
-        {/* All Client Plans Table */}
-        <Card>
+        {/* Client Plans Table */}
+        <Card style={{ marginBottom: 24 }}>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <h2 className="text-base font-semibold text-gray-900">All Client Plans</h2>
-                <p className="text-sm text-gray-400 mt-0.5">Complete list of enrolled plans</p>
+                <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>All Client Plans</h2>
+                <p style={{ fontSize: 11, color: '#9ca3af', margin: '2px 0 0' }}>Complete list of enrolled plans</p>
               </div>
+              <Button size="sm" variant="ghost" onClick={exportClientPlans} disabled={loading}>
+                <Download size={13} /> CSV
+              </Button>
             </div>
           </CardHeader>
           {loading ? (
-            <div className="p-16 text-center text-gray-400 text-sm">Loading...</div>
+            <div style={{ padding: 56, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Loading...</div>
           ) : (
             <Table>
               <TableHead>
-                <Th>Client</Th>
-                <Th>Plan</Th>
-                <Th>Total Amount</Th>
-                <Th>Paid</Th>
-                <Th>Balance</Th>
-                <Th>Status</Th>
-                <Th>Service Ready</Th>
-                <Th>Start Date</Th>
+                <Th>Client</Th><Th>Plan</Th><Th>Total</Th><Th>Paid</Th><Th>Balance</Th><Th>Status</Th><Th>Service</Th><Th>Start Date</Th>
               </TableHead>
               <TableBody>
                 {clientPlans.map((cp) => (
                   <Tr key={cp.id}>
                     <Td>
-                      <div className="flex items-center gap-2">
-                        <div className="w-7 h-7 bg-gradient-to-br from-blue-400 to-indigo-500 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
-                          {getInitials((cp as any).client?.full_name ?? '?')}
-                        </div>
-                        <span className="font-medium text-gray-900">{(cp as any).client?.full_name ?? '-'}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#5C1A1A', color: '#fff', fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{getInitials((cp as any).client?.full_name ?? '?')}</div>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: '#111827' }}>{(cp as any).client?.full_name ?? '-'}</span>
                       </div>
                     </Td>
-                    <Td>
-                      <span className="text-gray-700">{(cp as any).plan?.name ?? '-'}</span>
-                    </Td>
+                    <Td><span style={{ fontSize: 13 }}>{(cp as any).plan?.name ?? '-'}</span></Td>
                     <Td>{formatCurrency(cp.total_amount)}</Td>
-                    <Td><span className="text-green-600 font-medium">{formatCurrency(cp.paid_amount)}</span></Td>
-                    <Td>
-                      <span className={cp.balance > 0 ? 'text-red-500 font-medium' : 'text-green-600 font-medium'}>
-                        {formatCurrency(cp.balance)}
-                      </span>
-                    </Td>
-                    <Td>
-                      <Badge
-                        variant={cp.status === 'active' ? 'info' : cp.status === 'completed' ? 'success' : cp.status === 'cancelled' ? 'danger' : 'warning'}
-                      >
-                        {cp.status.replace('_', ' ').charAt(0).toUpperCase() + cp.status.replace('_', ' ').slice(1)}
-                      </Badge>
-                    </Td>
+                    <Td><span style={{ color: '#16a34a', fontWeight: 500 }}>{formatCurrency(cp.paid_amount)}</span></Td>
+                    <Td><span style={{ fontWeight: 500, color: cp.balance > 0 ? '#ef4444' : '#16a34a' }}>{formatCurrency(cp.balance)}</span></Td>
+                    <Td><Badge variant={cp.status === 'active' ? 'info' : cp.status === 'completed' ? 'success' : cp.status === 'cancelled' ? 'danger' : 'warning'}>{cp.status.replace('_', ' ').charAt(0).toUpperCase() + cp.status.replace('_', ' ').slice(1)}</Badge></Td>
                     <Td>
                       {cp.service_ready ? (
-                        <div className="flex items-center gap-1 text-green-600">
-                          <CheckCircle2 size={14} /> <span className="text-xs font-medium">Ready</span>
-                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 500, color: '#16a34a' }}>Ready</span>
                       ) : (
-                        <span className="text-xs text-gray-400">Pending</span>
+                        <span style={{ fontSize: 12, color: '#9ca3af' }}>Pending</span>
                       )}
                     </Td>
                     <Td>{formatDate(cp.start_date)}</Td>
@@ -261,39 +267,37 @@ export default function ReportsPage() {
           )}
         </Card>
 
-        {/* Recent Payments Table */}
+        {/* Payments Table */}
         <Card>
           <CardHeader>
-            <h2 className="text-base font-semibold text-gray-900">All Payment Records</h2>
-            <p className="text-sm text-gray-400 mt-0.5">{payments.length} total transactions</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h2 style={{ fontSize: 14, fontWeight: 600, color: '#111827', margin: 0 }}>All Payment Records</h2>
+                <p style={{ fontSize: 11, color: '#9ca3af', margin: '2px 0 0' }}>{payments.length} total transactions</p>
+              </div>
+              <Button size="sm" variant="ghost" onClick={exportPayments} disabled={loading}>
+                <Download size={13} /> CSV
+              </Button>
+            </div>
           </CardHeader>
           {loading ? (
-            <div className="p-16 text-center text-gray-400 text-sm">Loading...</div>
+            <div style={{ padding: 56, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Loading...</div>
           ) : payments.length === 0 ? (
-            <div className="p-8 text-center text-gray-400 text-sm">No payments recorded.</div>
+            <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>No payments recorded.</div>
           ) : (
             <Table>
               <TableHead>
-                <Th>Client</Th>
-                <Th>Plan</Th>
-                <Th>Amount</Th>
-                <Th>Method</Th>
-                <Th>Date</Th>
-                <Th>Reference #</Th>
+                <Th>Client</Th><Th>Plan</Th><Th>Amount</Th><Th>Method</Th><Th>Date</Th><Th>Reference</Th>
               </TableHead>
               <TableBody>
                 {payments.map((p) => (
                   <Tr key={p.id}>
-                    <Td className="font-medium text-gray-900">{(p as any).client_plan?.client?.full_name ?? '-'}</Td>
-                    <Td>{(p as any).client_plan?.plan?.name ?? '-'}</Td>
-                    <Td><span className="font-semibold text-green-600">{formatCurrency(p.amount)}</span></Td>
-                    <Td>
-                      <Badge variant={p.payment_method === 'cash' ? 'success' : p.payment_method === 'gcash' ? 'info' : 'default'}>
-                        {p.payment_method.replace('_', ' ').toUpperCase()}
-                      </Badge>
-                    </Td>
+                    <Td><span style={{ fontSize: 13, fontWeight: 500, color: '#111827' }}>{(p as any).client_plan?.client?.full_name ?? '-'}</span></Td>
+                    <Td><span style={{ fontSize: 13 }}>{(p as any).client_plan?.plan?.name ?? '-'}</span></Td>
+                    <Td><span style={{ fontWeight: 600, color: '#16a34a' }}>{formatCurrency(p.amount)}</span></Td>
+                    <Td><Badge variant={p.payment_method === 'cash' ? 'success' : p.payment_method === 'gcash' ? 'info' : 'default'}>{p.payment_method.replace('_', ' ').toUpperCase()}</Badge></Td>
                     <Td>{formatDate(p.payment_date)}</Td>
-                    <Td><span className="font-mono text-xs text-gray-500">{p.reference_number || '-'}</span></Td>
+                    <Td><span style={{ fontFamily: 'monospace', fontSize: 12, color: '#6b7280' }}>{p.reference_number || '-'}</span></Td>
                   </Tr>
                 ))}
               </TableBody>

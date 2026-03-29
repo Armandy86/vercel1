@@ -94,4 +94,3 @@ funeplan/
 
 ---
 
-Built for System Administration and Maintenance - Armandy Bollozos, T-32
